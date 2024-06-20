@@ -1,4 +1,5 @@
-﻿using System;
+﻿#if UNITY_EDITOR
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -22,7 +23,9 @@ namespace Edgegap
 
         public static BuildReport BuildServer()
         {
-            IEnumerable<string> scenes = EditorBuildSettings.scenes.Select(s=>s.path);
+            IEnumerable<string> scenes = EditorBuildSettings.scenes
+                .Where(s => s.enabled)
+                .Select(s => s.path);
             BuildPlayerOptions options = new BuildPlayerOptions
             {
                 scenes = scenes.ToArray(),
@@ -159,7 +162,7 @@ namespace Edgegap
             ConcurrentQueue<string> errors = new ConcurrentQueue<string>();
             ConcurrentQueue<string> outputs = new ConcurrentQueue<string>();
 
-            void PipeQueue(ConcurrentQueue<string> q, Action<string> opt)
+            void pipeQueue(ConcurrentQueue<string> q, Action<string> opt)
             {
                 while (!q.IsEmpty)
                 {
@@ -180,12 +183,14 @@ namespace Edgegap
             while (!proc.HasExited)
             {
                 await Task.Delay(100);
-                PipeQueue(errors, errorReciever);
-                PipeQueue(outputs, outputReciever);
+                pipeQueue(errors, errorReciever);
+                pipeQueue(outputs, outputReciever);
             }
 
-            PipeQueue(errors, errorReciever);
-            PipeQueue(outputs, outputReciever);
+            pipeQueue(errors, errorReciever);
+            pipeQueue(outputs, outputReciever);
+
+
         }
 
         static void Proc_OutputDataReceived(object sender, DataReceivedEventArgs e)
@@ -226,9 +231,77 @@ WORKDIR /root/
 
 RUN chmod +x /root/build/ServerBuild
 
+RUN apt-get update && \
+    apt-get install -y ca-certificates && \
+    apt-get clean && \
+    update-ca-certificates
+
 ENTRYPOINT [ ""/root/build/ServerBuild"", ""-batchmode"", ""-nographics""]
 ";
 
+        /// <summary>Run a Docker cmd with streaming log response. TODO: Plugin to other Docker cmds</summary>
+        /// <returns>Throws if logs contain "ERROR"</returns>
+        ///
+        /// <param name="registryUrl">ex: "registry.edgegap.com"</param>
+        /// <param name="repoUsername">ex: "robot$mycompany-asdf+client-push"</param>
+        /// <param name="repoPasswordToken">Different from ApiToken; sometimes called "Container Registry Password"</param>
+        /// <param name="onStatusUpdate">Log stream</param>
+        // MIRROR CHANGE: CROSS PLATFORM SUPPORT
+        static async Task<bool> RunCommand_DockerLogin(
+            string registryUrl,
+            string repoUsername,
+            string repoPasswordToken,
+            Action<string> outputReciever = null, Action<string> errorReciever = null)
+        {
+            // TODO: Use --password-stdin for security (!) This is no easy task for child Process | https://stackoverflow.com/q/51489359/6541639
+            // (!) Don't use single quotes for cross-platform support (works unexpectedly in `cmd`).
+
+            try
+            {
+#if UNITY_EDITOR_WIN
+            await RunCommand("cmd.exe", $"/c docker login -u \"{repoUsername}\" --password \"{repoPasswordToken}\" \"{registryUrl}\"", outputReciever, errorReciever);
+#elif UNITY_EDITOR_OSX
+            await RunCommand("/bin/bash", $"-c \"docker login -u \"{repoUsername}\" --password \"{repoPasswordToken}\" \"{registryUrl}\"\"", outputReciever, errorReciever);
+#elif UNITY_EDITOR_LINUX
+            await RunCommand("/bin/bash", $"-c \"docker login -u \"{repoUsername}\" --password \"{repoPasswordToken}\" \"{registryUrl}\"\"", outputReciever, errorReciever);
+#else
+            Debug.LogError("The platform is not supported yet.");
+#endif
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Error: {e}");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// v2: Login to Docker Registry via RunCommand(), returning streamed log messages:
+        /// "docker login {registryUrl} {repository} {repoUsername} {repoPasswordToken}"
+        /// </summary>
+        /// <param name="registryUrl">ex: "registry.edgegap.com"</param>
+        /// <param name="repoUsername">ex: "robot$mycompany-asdf+client-push"</param>
+        /// <param name="repoPasswordToken">Different from ApiToken; sometimes called "Container Registry Password"</param>
+        /// <param name="onStatusUpdate">Log stream</param>
+        /// <returns>isSuccess</returns>
+        public static async Task<bool> LoginContainerRegistry(
+            string registryUrl,
+            string repoUsername,
+            string repoPasswordToken,
+            Action<string> onStatusUpdate)
+        {
+            string error = null;
+            await RunCommand_DockerLogin(registryUrl, repoUsername, repoPasswordToken, onStatusUpdate, msg => error = msg); // MIRROR CHANGE
+            if (error.Contains("ERROR"))
+            {
+                Debug.LogError(error);
+                return false;
+            }
+            return true;
+        }
 
     }
 }
+#endif

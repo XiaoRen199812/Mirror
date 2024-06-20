@@ -1,3 +1,6 @@
+// MIRROR CHANGE: disable this completely. otherwise InitUIElements can still throw NRE.
+/*
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -78,7 +81,8 @@ namespace Edgegap
         StyleSheet _serverDataStylesheet;
         List<VisualElement> _serverDataContainers = new List<VisualElement>();
 
-        [MenuItem("Edgegap/Edgegap Hosting")] // MIRROR CHANGE
+        [Obsolete("See EdgegapWindowV2.ShowEdgegapToolWindow()")]
+        // [MenuItem("Edgegap/Server Management")]
         public static void ShowEdgegapToolWindow()
         {
             EdgegapWindow window = GetWindow<EdgegapWindow>();
@@ -378,6 +382,30 @@ namespace Edgegap
                 string imageName = _containerImageRepo;
                 string tag = _containerImageTag;
 
+                // MIRROR CHANGE ///////////////////////////////////////////////
+                // registry, repository and tag can not contain whitespaces.
+                // otherwise the docker command will throw an error:
+                // "ERROR: "docker buildx build" requires exactly 1 argument."
+                // catch this early and notify the user immediately.
+                if (registry.Contains(" "))
+                {
+                    onError($"Container Registry is not allowed to contain whitespace: '{registry}'");
+                    return;
+                }
+
+                if (imageName.Contains(" "))
+                {
+                    onError($"Image Repository is not allowed to contain whitespace: '{imageName}'");
+                    return;
+                }
+
+                if (tag.Contains(" "))
+                {
+                    onError($"Tag is not allowed to contain whitespace: '{tag}'");
+                    return;
+                }
+                // END MIRROR CHANGE ///////////////////////////////////////////
+
                 // increment tag for quicker iteration
                 if (_autoIncrementTag)
                 {
@@ -610,14 +638,23 @@ namespace Edgegap
 
         void SyncObjectWithForm()
         {
+            if (_apiKeyInput == null) return; // MIRROR CHANGE: fix NRE when this is called before UI elements were assgned
+
             _apiKey = _apiKeyInput.value;
             _apiEnvironment = (ApiEnvironment)_apiEnvironmentSelect.value;
             _appName = _appNameInput.value;
             _appVersionName = _appVersionNameInput.value;
 
-            _containerRegistry = _containerRegistryInput.value;
-            _containerImageTag = _containerImageTagInput.value;
-            _containerImageRepo = _containerImageRepoInput.value;
+            // MIRROR CHANGE ///////////////////////////////////////////////////
+            // registry, repository and tag can not contain whitespaces.
+            // otherwise it'll throw an error:
+            // "ERROR: "docker buildx build" requires exactly 1 argument."
+            // trim whitespace in case users accidentally added some.
+            _containerRegistry = _containerRegistryInput.value.Trim();
+            _containerImageTag = _containerImageTagInput.value.Trim();
+            _containerImageRepo = _containerImageRepoInput.value.Trim();
+            // END MIRROR CHANGE ///////////////////////////////////////////////
+
             _autoIncrementTag = _autoIncrementTagInput.value;
         }
 
@@ -893,7 +930,7 @@ namespace Edgegap
             serverDataTree.styleSheets.Add(_serverDataStylesheet);
 
             bool hasServerData = EdgegapServerDataManager._serverData != null;
-            bool isReady = hasServerData && EdgegapServerDataManager._serverData.GetServerStatus().IsOneOf(ServerStatus.Ready, ServerStatus.Error);
+            bool isReady = hasServerData && EdgegapServerDataManager. _serverData.GetServerStatus().IsOneOf(ServerStatus.Ready, ServerStatus.Error);
 
             if (hasServerData)
             {
@@ -947,3 +984,5 @@ namespace Edgegap
         }
     }
 }
+#endif
+*/

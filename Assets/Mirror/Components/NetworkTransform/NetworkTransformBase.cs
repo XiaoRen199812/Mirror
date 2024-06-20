@@ -46,6 +46,12 @@ namespace Mirror
         public bool syncRotation = true;  // do not change at runtime!
         public bool syncScale = false; // do not change at runtime! rare. off by default.
 
+        [Header("Bandwidth Savings")]
+        [Tooltip("When true, changes are not sent unless greater than sensitivity values below.")]
+        public bool onlySyncOnChange = true;
+        [Tooltip("Apply smallest-three quaternion compression. This is lossy, you can disable it if the small rotation inaccuracies are noticeable in your project.")]
+        public bool compressRotation = true;
+
         // interpolation is on by default, but can be disabled to jump to
         // the destination immediately. some projects need this.
         [Header("Interpolation")]
@@ -93,13 +99,9 @@ namespace Mirror
         public Color overlayColor = new Color(0, 0, 0, 0.5f);
 
         // initialization //////////////////////////////////////////////////////
-        // make sure to call this when inheriting too!
-        protected virtual void Awake() { }
-
-        protected override void OnValidate()
+        // forcec configuration of some settings
+        protected virtual void Configure()
         {
-            base.OnValidate();
-
             // set target to self if none yet
             if (target == null) target = transform;
 
@@ -115,6 +117,22 @@ namespace Mirror
             if (coordinateSpace == CoordinateSpace.World) syncScale = false;
         }
 
+        // make sure to call this when inheriting too!
+        protected virtual void Awake()
+        {
+            // sometimes OnValidate() doesn't run before launching a project.
+            // need to guarantee configuration runs.
+            Configure();
+        }
+
+        protected override void OnValidate()
+        {
+            base.OnValidate();
+
+            // configure in awake
+            Configure();
+        }
+
         // snapshot functions //////////////////////////////////////////////////
         // get local/world position
         protected virtual Vector3 GetPosition() =>
@@ -126,7 +144,7 @@ namespace Mirror
 
         // get local/world scale
         protected virtual Vector3 GetScale() =>
-            coordinateSpace == CoordinateSpace.Local ? target.localScale    : target.lossyScale;
+            coordinateSpace == CoordinateSpace.Local ? target.localScale : target.lossyScale;
 
         // set local/world position
         protected virtual void SetPosition(Vector3 position)
@@ -154,7 +172,7 @@ namespace Mirror
             // Unity doesn't support setting world scale.
             // OnValidate disables syncScale in world mode.
             // else
-                // target.lossyScale = scale; // TODO
+            // target.lossyScale = scale; // TODO
         }
 
         // construct a snapshot of the current state
@@ -186,7 +204,7 @@ namespace Mirror
 
             if (!position.HasValue) position = snapshots.Count > 0 ? snapshots.Values[snapshots.Count - 1].position : GetPosition();
             if (!rotation.HasValue) rotation = snapshots.Count > 0 ? snapshots.Values[snapshots.Count - 1].rotation : GetRotation();
-            if (!scale.HasValue)    scale    = snapshots.Count > 0 ? snapshots.Values[snapshots.Count - 1].scale    : GetScale();
+            if (!scale.HasValue) scale = snapshots.Count > 0 ? snapshots.Values[snapshots.Count - 1].scale : GetScale();
 
             // insert transform snapshot
             SnapshotInterpolation.InsertIfNotExists(
@@ -225,7 +243,7 @@ namespace Mirror
             // interpolate parts
             if (syncPosition) SetPosition(interpolatePosition ? interpolated.position : endGoal.position);
             if (syncRotation) SetRotation(interpolateRotation ? interpolated.rotation : endGoal.rotation);
-            if (syncScale)       SetScale(interpolateScale    ? interpolated.scale    : endGoal.scale);
+            if (syncScale) SetScale(interpolateScale ? interpolated.scale : endGoal.scale);
         }
 
         // client->server teleport to force position without interpolation.
@@ -305,9 +323,9 @@ namespace Mirror
         }
 
         [ClientRpc]
-        void RpcReset()
+        void RpcResetState()
         {
-            Reset();
+            ResetState();
         }
 
         // common Teleport code for client->server and server->client
@@ -326,8 +344,7 @@ namespace Mirror
             // but server's last delta will have been reset, causing offsets.
             //
             // instead, simply clear snapshots.
-            serverSnapshots.Clear();
-            clientSnapshots.Clear();
+            ResetState();
 
             // TODO
             // what if we still receive a snapshot from before the interpolation?
@@ -352,8 +369,7 @@ namespace Mirror
             // but server's last delta will have been reset, causing offsets.
             //
             // instead, simply clear snapshots.
-            serverSnapshots.Clear();
-            clientSnapshots.Clear();
+            ResetState();
 
             // TODO
             // what if we still receive a snapshot from before the interpolation?
@@ -361,7 +377,7 @@ namespace Mirror
             // -> maybe add destination as first entry?
         }
 
-        public virtual void Reset()
+        public virtual void ResetState()
         {
             // disabled objects aren't updated anymore.
             // so let's clear the buffers.
@@ -369,9 +385,16 @@ namespace Mirror
             clientSnapshots.Clear();
         }
 
+        public virtual void Reset()
+        {
+            ResetState();
+            // default to ClientToServer so this works immediately for users
+            syncDirection = SyncDirection.ClientToServer;
+        }
+
         protected virtual void OnEnable()
         {
-            Reset();
+            ResetState();
 
             if (NetworkServer.active)
                 NetworkIdentity.clientAuthorityCallback += OnClientAuthorityChanged;
@@ -379,7 +402,7 @@ namespace Mirror
 
         protected virtual void OnDisable()
         {
-            Reset();
+            ResetState();
 
             if (NetworkServer.active)
                 NetworkIdentity.clientAuthorityCallback -= OnClientAuthorityChanged;
@@ -397,8 +420,8 @@ namespace Mirror
 
             if (syncDirection == SyncDirection.ClientToServer)
             {
-                Reset();
-                RpcReset();
+                ResetState();
+                RpcResetState();
             }
         }
 
